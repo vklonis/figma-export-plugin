@@ -189,13 +189,6 @@ figma-plugin/
 - Use `console.log()` in `code.ts` - logs appear in Figma Desktop console (Help → Toggle Developer Tools)
 - Use `console.log()` in `ui.html` - logs appear in plugin UI console (right-click plugin → Inspect)
 
-## Publishing (Future)
-
-When ready to publish to Figma Community:
-
-1. Update version in `manifest.json` and `package.json`
-2. Test thoroughly with various frame types
-3. Follow Figma's plugin publishing guidelines: https://www.figma.com/plugin-docs/publishing/
 
 ## Next steps and possible additions 
 
@@ -267,3 +260,4 @@ When ready to publish to Figma Community:
     - Add flag to indicate if image should be compressed
     - Suggest optimal export format (PNG vs JPG vs WebP)
     - Could reduce final banner file sizes
+
