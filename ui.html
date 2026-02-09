@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 11px;
+      background: #ffffff;
+      color: #000000;
+    }
+
+    h2 {
+      margin: 0 0 12px 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: #000000;
+    }
+
+    .section {
+      margin-bottom: 16px;
+    }
+
+    .frame-list {
+      border: 1px solid #e5e5e5;
+      border-radius: 4px;
+      max-height: 300px;
+      overflow-y: auto;
+      background: #f5f5f5;
+    }
+
+    .frame-item {
+      padding: 8px 12px;
+      border-bottom: 1px solid #e5e5e5;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      background: #ffffff;
+      transition: background 0.1s;
+    }
+
+    .frame-item:last-child {
+      border-bottom: none;
+    }
+
+    .frame-item:hover {
+      background: #f0f0f0;
+    }
+
+    .frame-item.selected {
+      background: #0d99ff;
+      color: #ffffff;
+    }
+
+    .frame-item input[type="checkbox"] {
+      margin-right: 8px;
+    }
+
+    .frame-info {
+      flex: 1;
+    }
+
+    .frame-name {
+      font-weight: 500;
+      margin-bottom: 2px;
+    }
+
+    .frame-size {
+      font-size: 10px;
+      color: #999999;
+    }
+
+    .frame-item.selected .frame-size {
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .buttons {
+      display: flex;
+      gap: 8px;
+    }
+
+    button {
+      flex: 1;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+
+    button.primary {
+      background: #0d99ff;
+      color: #ffffff;
+    }
+
+    button.primary:hover {
+      background: #0088ee;
+    }
+
+    button.primary:disabled {
+      background: #cccccc;
+      cursor: not-allowed;
+    }
+
+    button.secondary {
+      background: #ffffff;
+      color: #000000;
+      border: 1px solid #e5e5e5;
+    }
+
+    button.secondary:hover {
+      background: #f5f5f5;
+    }
+
+    .status {
+      padding: 12px;
+      background: #f5f5f5;
+      border-radius: 4px;
+      margin-bottom: 16px;
+      font-size: 11px;
+    }
+
+    .status.loading {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .progress {
+      margin-top: 8px;
+      height: 4px;
+      background: #e5e5e5;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: #0d99ff;
+      transition: width 0.3s;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #999999;
+    }
+
+    .select-all {
+      padding: 8px 12px;
+      background: #f5f5f5;
+      border-bottom: 1px solid #e5e5e5;
+      display: flex;
+      align-items: center;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .select-all:hover {
+      background: #eeeeee;
+    }
+
+    .select-all input[type="checkbox"] {
+      margin-right: 8px;
+    }
+
+    .help-text {
+      font-size: 10px;
+      color: #999999;
+      margin-top: 8px;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="section">
+      <h2>BannerForge Export</h2>
+      <p class="help-text">
+        Select one or more frames to export. All layers, images, styles, and typography will be included in the JSON export.
+      </p>
+    </div>
+
+    <div class="section">
+      <div id="status" style="display: none;"></div>
+
+      <div id="frames-container">
+        <div class="frame-list">
+          <div class="select-all" id="select-all-container" style="display: none;">
+            <input type="checkbox" id="select-all">
+            <label for="select-all">Select all frames</label>
+          </div>
+          <div id="frame-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="buttons">
+      <button class="secondary" id="cancel-btn">Cancel</button>
+      <button class="primary" id="export-btn" disabled>Export Selected</button>
+    </div>
+  </div>
+
+  <script>
+    let frames = [];
+    let selectedFrameIds = new Set();
+
+    // Request frames on load
+    window.onload = () => {
+      parent.postMessage({ pluginMessage: { type: 'get-frames' } }, '*');
+    };
+
+    // Listen for messages from plugin code
+    window.onmessage = (event) => {
+      const msg = event.data.pluginMessage;
+
+      if (msg.type === 'frames-list') {
+        frames = msg.frames;
+        renderFrameList();
+      }
+
+      if (msg.type === 'export-progress') {
+        showStatus(`Exporting ${msg.frameName}... (${msg.current}/${msg.total})`, 'loading');
+        updateProgress(msg.current, msg.total);
+      }
+
+      if (msg.type === 'export-complete') {
+        showStatus('Export complete! Downloading JSON...', 'success');
+        downloadJSON(msg.data);
+        setTimeout(() => {
+          parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
+        }, 1500);
+      }
+
+      if (msg.type === 'export-error') {
+        showStatus(`Error: ${msg.message}`, 'error');
+      }
+    };
+
+    function renderFrameList() {
+      const frameListEl = document.getElementById('frame-list');
+      const selectAllContainer = document.getElementById('select-all-container');
+
+      if (frames.length === 0) {
+        frameListEl.innerHTML = '<div class="empty-state">No frames found on current page.<br>Create a frame to get started.</div>';
+        selectAllContainer.style.display = 'none';
+        return;
+      }
+
+      selectAllContainer.style.display = 'flex';
+
+      frameListEl.innerHTML = frames.map(frame => `
+        <div class="frame-item" data-id="${frame.id}">
+          <input type="checkbox" id="frame-${frame.id}" data-id="${frame.id}">
+          <div class="frame-info">
+            <div class="frame-name">${escapeHtml(frame.name)}</div>
+            <div class="frame-size">${Math.round(frame.width)} × ${Math.round(frame.height)}</div>
+          </div>
+        </div>
+      `).join('');
+
+      // Add click handlers
+      frameListEl.querySelectorAll('.frame-item').forEach(item => {
+        const frameId = item.dataset.id;
+        const checkbox = item.querySelector('input[type="checkbox"]');
+
+        item.addEventListener('click', (e) => {
+          if (e.target.type !== 'checkbox') {
+            checkbox.checked = !checkbox.checked;
+          }
+          toggleFrameSelection(frameId, checkbox.checked);
+        });
+
+        checkbox.addEventListener('change', (e) => {
+          toggleFrameSelection(frameId, e.target.checked);
+        });
+      });
+
+      // Select all handler
+      document.getElementById('select-all').addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        frameListEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          cb.checked = checked;
+          toggleFrameSelection(cb.dataset.id, checked);
+        });
+      });
+    }
+
+    function toggleFrameSelection(frameId, selected) {
+      const item = document.querySelector(`.frame-item[data-id="${frameId}"]`);
+
+      if (selected) {
+        selectedFrameIds.add(frameId);
+        item.classList.add('selected');
+      } else {
+        selectedFrameIds.delete(frameId);
+        item.classList.remove('selected');
+      }
+
+      updateExportButton();
+      updateSelectAllCheckbox();
+    }
+
+    function updateSelectAllCheckbox() {
+      const selectAllCheckbox = document.getElementById('select-all');
+      if (selectedFrameIds.size === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+      } else if (selectedFrameIds.size === frames.length) {
+        selectAllCheckbox.checked = true;
+        selectAllCheckbox.indeterminate = false;
+      } else {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = true;
+      }
+    }
+
+    function updateExportButton() {
+      const exportBtn = document.getElementById('export-btn');
+      const count = selectedFrameIds.size;
+
+      if (count === 0) {
+        exportBtn.disabled = true;
+        exportBtn.textContent = 'Export Selected';
+      } else {
+        exportBtn.disabled = false;
+        exportBtn.textContent = `Export ${count} Frame${count > 1 ? 's' : ''}`;
+      }
+    }
+
+    function showStatus(message, type) {
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = message;
+      statusEl.className = `status ${type}`;
+      statusEl.style.display = 'block';
+
+      if (type === 'loading') {
+        statusEl.innerHTML = message + '<div class="progress"><div class="progress-bar" id="progress-bar"></div></div>';
+      }
+    }
+
+    function updateProgress(current, total) {
+      const progressBar = document.getElementById('progress-bar');
+      if (progressBar) {
+        const percent = (current / total) * 100;
+        progressBar.style.width = percent + '%';
+      }
+    }
+
+    function downloadJSON(data) {
+      const json = JSON.stringify(data, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+
+      // Generate filename
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+      const frameNames = Array.from(selectedFrameIds)
+        .map(id => frames.find(f => f.id === id)?.name)
+        .filter(Boolean)
+        .join('_')
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 50);
+
+      a.href = url;
+      a.download = `bannerforge_${frameNames}_${timestamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Button handlers
+    document.getElementById('export-btn').addEventListener('click', () => {
+      if (selectedFrameIds.size === 0) return;
+
+      showStatus('Starting export...', 'loading');
+      parent.postMessage({
+        pluginMessage: {
+          type: 'export-frames',
+          frameIds: Array.from(selectedFrameIds)
+        }
+      }, '*');
+    });
+
+    document.getElementById('cancel-btn').addEventListener('click', () => {
+      parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "bannerforge-figma-plugin",
+  "version": "1.0.0",
+  "description": "Export Figma frames to BannerForge JSON format",
+  "main": "code.js",
+  "scripts": {
+    "build": "tsc --watch",
+    "build:once": "tsc"
+  },
+  "author": "BannerForge",
+  "license": "MIT",
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.90.0",
+    "typescript": "^5.3.3"
+  }
+}
