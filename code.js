@@ -163,14 +163,35 @@ async function processNodeRecursive(node, rootFrame, outputNodes, images) {
     outputNodes.push(exportNode);
 }
 async function processShapeNode(node, exportNode, images) {
-    // Extract fills
-    if ("fills" in node && node.fills !== figma.mixed) {
-        exportNode.fills = await processPaints(node.fills, images);
+    // Ellipse arcs (partial ellipses or donuts) cannot be expressed in CSS —
+    // border-radius:50% always renders a full ellipse. Rasterize them instead.
+    if (node.type === "ELLIPSE" && "arcData" in node) {
+        const arc = node.arcData;
+        const isPartialArc = arc.startingAngle !== 0 ||
+            Math.abs(arc.endingAngle - Math.PI * 2) > 0.001 ||
+            arc.innerRadius !== 0;
+        if (isPartialArc) {
+            await exportAsImage(node, exportNode, images);
+            return;
+        }
+    }
+    const fills = "fills" in node && node.fills !== figma.mixed
+        ? node.fills
+        : [];
+    // If any fill is an image, export the node as a raster at its display size
+    // instead of fetching the original full-resolution source via getBytesAsync().
+    if (fills.some((f) => f.type === "IMAGE")) {
+        await exportAsImage(node, exportNode, images);
+        return;
+    }
+    // Extract fills (solid / gradient only at this point)
+    if (fills.length > 0) {
+        exportNode.fills = await processPaints(fills, images);
     }
     // Extract strokes
     if ("strokes" in node && Array.isArray(node.strokes)) {
         exportNode.strokes = await processPaints(node.strokes, images);
-        exportNode.strokeWeight = node.strokeWeight;
+        exportNode.strokeWeight = typeof node.strokeWeight !== "symbol" ? node.strokeWeight : undefined;
         exportNode.strokeAlign = node.strokeAlign;
     }
     // Corner radius (for rectangles)
@@ -197,13 +218,13 @@ async function processTextNode(node, exportNode) {
     // Extract text content
     exportNode.characters = node.characters;
     // Extract typography - handle mixed styles
-    exportNode.fontSize = node.fontSize;
-    exportNode.fontName = node.fontName;
+    exportNode.fontSize = node.fontSize !== figma.mixed ? node.fontSize : null;
+    exportNode.fontName = node.fontName !== figma.mixed ? node.fontName : null;
     exportNode.fontWeight = getFontWeight(node.fontName);
     exportNode.textAlignHorizontal = node.textAlignHorizontal;
     exportNode.textAlignVertical = node.textAlignVertical;
-    exportNode.letterSpacing = node.letterSpacing;
-    exportNode.lineHeight = node.lineHeight;
+    exportNode.letterSpacing = node.letterSpacing !== figma.mixed ? node.letterSpacing : null;
+    exportNode.lineHeight = node.lineHeight !== figma.mixed ? node.lineHeight : null;
     exportNode.textCase =
         node.textCase !== figma.mixed ? node.textCase : "ORIGINAL";
     exportNode.textDecoration =
@@ -256,7 +277,7 @@ async function exportAsImage(node, exportNode, images) {
     try {
         const bytes = await node.exportAsync({
             format: "PNG",
-            constraint: { type: "SCALE", value: 2 }, // 2x for quality
+            constraint: { type: "SCALE", value: 1 },
         });
         const imageKey = `node_${node.id}`;
         images[imageKey] = bytes;
@@ -270,7 +291,12 @@ async function exportAsImage(node, exportNode, images) {
         ];
     }
     catch (error) {
-        console.warn("Could not export node as image:", node.name, error);
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn("Could not export node as image:", node.name, msg);
+        figma.ui.postMessage({
+            type: "export-warning",
+            message: `Could not rasterize "${node.name}" (${node.type}): ${msg}`,
+        });
     }
 }
 function extractBackgroundColor(frame) {

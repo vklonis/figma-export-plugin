@@ -187,6 +187,24 @@
       margin-top: 8px;
       line-height: 1.4;
     }
+
+    .format-selector {
+      display: flex;
+      gap: 16px;
+      padding: 6px 0 2px 0;
+    }
+
+    .format-option {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .format-option label {
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -194,7 +212,7 @@
     <div class="section">
       <h2>BannerForge Export</h2>
       <p class="help-text">
-        Select one or more frames to export. All layers, images, styles, and typography will be included in the JSON export.
+        Select one or more frames and an export format. JSON preserves all layer data. HTML produces a browser-renderable file that matches the Figma layout.
       </p>
     </div>
 
@@ -212,6 +230,23 @@
       </div>
     </div>
 
+    <div class="section">
+      <div class="format-selector">
+        <div class="format-option">
+          <input type="radio" name="export-format" id="format-json" value="json" checked>
+          <label for="format-json">JSON</label>
+        </div>
+        <div class="format-option">
+          <input type="radio" name="export-format" id="format-html" value="html">
+          <label for="format-html">HTML</label>
+        </div>
+        <div class="format-option">
+          <input type="radio" name="export-format" id="format-both" value="both">
+          <label for="format-both">Both</label>
+        </div>
+      </div>
+    </div>
+
     <div class="buttons">
       <button class="secondary" id="cancel-btn">Cancel</button>
       <button class="primary" id="export-btn" disabled>Export Selected</button>
@@ -221,10 +256,15 @@
   <script>
     let frames = [];
     let selectedFrameIds = new Set();
+    let selectedFormat = 'json';
 
     // Request frames on load
     window.onload = () => {
       parent.postMessage({ pluginMessage: { type: 'get-frames' } }, '*');
+
+      document.querySelectorAll('input[name="export-format"]').forEach(radio => {
+        radio.addEventListener('change', (e) => { selectedFormat = e.target.value; });
+      });
     };
 
     // Listen for messages from plugin code
@@ -242,8 +282,13 @@
       }
 
       if (msg.type === 'export-complete') {
-        showStatus('Export complete! Downloading JSON...', 'success');
-        downloadJSON(msg.data);
+        showStatus('Export complete! Downloading...', 'success');
+        if (selectedFormat === 'json' || selectedFormat === 'both') {
+          downloadJSON(msg.data);
+        }
+        if (selectedFormat === 'html' || selectedFormat === 'both') {
+          downloadHTML(msg.data);
+        }
         setTimeout(() => {
           parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
         }, 1500);
@@ -391,6 +436,305 @@
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
+    }
+
+    function generateHTML(exportData) {
+      const images = exportData.images || {};
+
+      function colorToCSS(color, opacity) {
+        if (!color) return 'transparent';
+        const r = Math.round((color.r || 0) * 255);
+        const g = Math.round((color.g || 0) * 255);
+        const b = Math.round((color.b || 0) * 255);
+        const a = typeof opacity === 'number' ? opacity : 1;
+        return `rgba(${r},${g},${b},${a})`;
+      }
+
+      function stopsToCSS(stops) {
+        return (stops || []).map(s => {
+          const c = colorToCSS(s.color, s.color.a ?? 1);
+          return `${c} ${Math.round(s.position * 100)}%`;
+        }).join(', ');
+      }
+
+      function linearGradientToCSS(fill) {
+        const t = fill.gradientTransform;
+        const a = t[0][0], b = t[0][1];
+        const angleDeg = Math.round(Math.atan2(a, -b) * 180 / Math.PI);
+        return `linear-gradient(${angleDeg}deg, ${stopsToCSS(fill.gradientStops)})`;
+      }
+
+      function radialGradientToCSS(fill) {
+        return `radial-gradient(ellipse at center, ${stopsToCSS(fill.gradientStops)})`;
+      }
+
+      function fillsToCSS(fills) {
+        if (!fills || fills.length === 0) return '';
+        // Reverse so first Figma fill is the top CSS layer
+        const layers = [...fills].reverse().map(fill => {
+          if (!fill.visible && fill.visible !== undefined) return '';
+          if (fill.type === 'SOLID') {
+            return colorToCSS(fill.color, fill.opacity);
+          }
+          if (fill.type === 'IMAGE') {
+            const b64 = images[fill.imageHash] || '';
+            if (b64.length < 4) return '';  // guard: empty/invalid base64 must never reach url()
+            const size = fill.scaleMode === 'FIT'  ? 'contain'
+                       : fill.scaleMode === 'TILE' ? 'auto'
+                       :                             'cover';
+            return `url("data:image/png;base64,${b64}") center / ${size} no-repeat`;
+          }
+          if (fill.type === 'GRADIENT_LINEAR') return linearGradientToCSS(fill);
+          if (fill.type === 'GRADIENT_RADIAL') return radialGradientToCSS(fill);
+          return '';
+        }).filter(Boolean);
+        return layers.join(', ');
+      }
+
+      function effectsToCSS(effects) {
+        if (!effects || effects.length === 0) return {};
+        const shadows = [];
+        let filterVal = '';
+        let backdropVal = '';
+        for (const e of effects) {
+          if (e.visible === false) continue;
+          if (e.type === 'DROP_SHADOW') {
+            const c = colorToCSS(e.color, e.color.a ?? 1);
+            shadows.push(`${e.offset.x}px ${e.offset.y}px ${e.radius}px ${e.spread || 0}px ${c}`);
+          } else if (e.type === 'INNER_SHADOW') {
+            const c = colorToCSS(e.color, e.color.a ?? 1);
+            shadows.push(`inset ${e.offset.x}px ${e.offset.y}px ${e.radius}px ${e.spread || 0}px ${c}`);
+          } else if (e.type === 'LAYER_BLUR') {
+            filterVal = `blur(${e.radius}px)`;
+          } else if (e.type === 'BACKGROUND_BLUR') {
+            backdropVal = `blur(${e.radius}px)`;
+          }
+        }
+        const result = {};
+        if (shadows.length) result.boxShadow = shadows.join(', ');
+        if (filterVal) result.filter = filterVal;
+        if (backdropVal) result.backdropFilter = backdropVal;
+        return result;
+      }
+
+      function blendModeToCSS(bm) {
+        const map = {
+          MULTIPLY: 'multiply', SCREEN: 'screen', OVERLAY: 'overlay',
+          DARKEN: 'darken', LIGHTEN: 'lighten', COLOR_DODGE: 'color-dodge',
+          COLOR_BURN: 'color-burn', HARD_LIGHT: 'hard-light', SOFT_LIGHT: 'soft-light',
+          DIFFERENCE: 'difference', EXCLUSION: 'exclusion', HUE: 'hue',
+          SATURATION: 'saturation', COLOR: 'color', LUMINOSITY: 'luminosity'
+        };
+        return map[bm] || 'normal';
+      }
+
+      function cornerRadiusToCSS(cr) {
+        if (cr === undefined || cr === null) return '';
+        if (Array.isArray(cr)) return `${cr[0]}px ${cr[1]}px ${cr[2]}px ${cr[3]}px`;
+        return `${cr}px`;
+      }
+
+      function isMixed(v) { return typeof v === 'symbol'; }
+
+      function renderNode(node, offsetX, offsetY) {
+        offsetX = offsetX || 0;
+        offsetY = offsetY || 0;
+
+        const isContainer = node.type === 'FRAME' || node.type === 'GROUP'
+                         || node.type === 'INSTANCE' || node.type === 'COMPONENT';
+        const isText = node.type === 'TEXT';
+        const isEllipse = node.type === 'ELLIPSE';
+
+        // node.x/y are always relative to the root frame (not the parent div).
+        // Subtract the accumulated parent offset so CSS absolute positioning
+        // (which is relative to the nearest positioned ancestor) lands correctly.
+        const parts = [
+          'position:absolute',
+          `left:${node.x - offsetX}px`,
+          `top:${node.y - offsetY}px`,
+          `width:${node.width}px`,
+          `height:${node.height}px`,
+        ];
+
+        if (typeof node.opacity === 'number' && node.opacity !== 1) {
+          parts.push(`opacity:${node.opacity}`);
+        }
+        if (node.blendMode && node.blendMode !== 'NORMAL') {
+          parts.push(`mix-blend-mode:${blendModeToCSS(node.blendMode)}`);
+        }
+        if (node.rotation) {
+          parts.push(`transform:rotate(${-node.rotation}deg)`);
+          parts.push('transform-origin:50% 50%');
+        }
+        // Only FRAME/INSTANCE/COMPONENT nodes clip content in Figma.
+        // GROUP nodes never clip their children — applying overflow:hidden to them
+        // would hide arc/vector children that legitimately extend past the group bounds.
+        if (isContainer && node.type !== 'GROUP') {
+          parts.push('overflow:hidden');
+        }
+
+        // Fills
+        // IMAGE fills are rendered as <img> elements rather than CSS background-image.
+        // CSS url("data:...") inside a file:// document triggers Chrome's cross-origin
+        // security check and is silently blocked; <img src="data:..."> is not affected.
+        const imgFillTags = [];
+        if (node.fills && node.fills.length > 0) {
+          if (isText) {
+            const solid = node.fills.find(f => f.type === 'SOLID');
+            if (solid) parts.push(`color:${colorToCSS(solid.color, solid.opacity)}`);
+          } else {
+            const visualFills = node.fills.filter(f => f.type !== 'IMAGE');
+            const imageFills  = node.fills.filter(f => f.type === 'IMAGE');
+
+            if (visualFills.length > 0) {
+              const bg = fillsToCSS(visualFills);
+              if (bg) parts.push(`background:${bg}`);
+            }
+
+            for (const fill of imageFills) {
+              if (fill.visible === false) continue;
+              const b64 = images[fill.imageHash] || '';
+              if (b64.length < 4) continue;
+              const fit = fill.scaleMode === 'FIT'  ? 'contain'
+                        : fill.scaleMode === 'TILE' ? 'auto'
+                        :                             'cover';
+              imgFillTags.push(
+                `<img src="data:image/png;base64,${b64}" `
+                + `style="position:absolute;top:0;left:0;width:100%;height:100%;`
+                + `object-fit:${fit};display:block;" alt="">`
+              );
+            }
+          }
+        }
+
+        // Border radius
+        if (isEllipse) {
+          parts.push('border-radius:50%');
+        } else if (node.cornerRadius !== undefined && node.cornerRadius !== null) {
+          const cr = cornerRadiusToCSS(node.cornerRadius);
+          if (cr) parts.push(`border-radius:${cr}`);
+        }
+
+        // Strokes
+        if (node.strokes && node.strokes.length > 0 && node.strokeWeight) {
+          const sp = node.strokes[0];
+          if (sp && sp.type === 'SOLID') {
+            const sc = colorToCSS(sp.color, sp.opacity);
+            const w = node.strokeWeight;
+            const align = node.strokeAlign || 'CENTER';
+            if (align === 'INSIDE') {
+              parts.push(`box-shadow:inset 0 0 0 ${w}px ${sc}`);
+            } else if (align === 'OUTSIDE') {
+              parts.push(`box-shadow:0 0 0 ${w}px ${sc}`);
+            } else {
+              parts.push(`border:${w}px solid ${sc}`);
+            }
+          }
+        }
+
+        // Effects
+        const fx = effectsToCSS(node.effects);
+        if (fx.boxShadow) {
+          // Merge with any stroke shadow already added
+          const existing = parts.findIndex(p => p.startsWith('box-shadow:'));
+          if (existing >= 0) {
+            parts[existing] = parts[existing] + ', ' + fx.boxShadow;
+          } else {
+            parts.push(`box-shadow:${fx.boxShadow}`);
+          }
+        }
+        if (fx.filter) parts.push(`filter:${fx.filter}`);
+        if (fx.backdropFilter) parts.push(`backdrop-filter:${fx.backdropFilter}`);
+
+        const styleStr = parts.join(';');
+
+        // Inner content — image fills rendered first so children stack on top
+        let inner = imgFillTags.join('');
+        if (isText) {
+          const fs = isMixed(node.fontSize) ? 16 : (node.fontSize || 16);
+          const fw = node.fontWeight || 400;
+          const ff = (!node.fontName || isMixed(node.fontName))
+                     ? 'sans-serif'
+                     : `"${node.fontName.family}",sans-serif`;
+          const alignH = { LEFT: 'left', CENTER: 'center', RIGHT: 'right', JUSTIFIED: 'justify' };
+          const ta = alignH[node.textAlignHorizontal] || 'left';
+          const alignV = { CENTER: 'center', BOTTOM: 'flex-end' };
+          const va = alignV[node.textAlignVertical] || 'flex-start';
+          const tcMap = { UPPER: 'uppercase', LOWER: 'lowercase', TITLE: 'capitalize' };
+          const tc = tcMap[node.textCase] || 'none';
+          const tdMap = { UNDERLINE: 'underline', STRIKETHROUGH: 'line-through' };
+          const td = tdMap[node.textDecoration] || 'none';
+
+          let ls = '';
+          if (node.letterSpacing && !isMixed(node.letterSpacing)) {
+            ls = node.letterSpacing.unit === 'PERCENT'
+                 ? `letter-spacing:${node.letterSpacing.value / 100}em;`
+                 : `letter-spacing:${node.letterSpacing.value}px;`;
+          }
+          let lh = '';
+          if (node.lineHeight && !isMixed(node.lineHeight) && node.lineHeight.unit !== 'AUTO') {
+            lh = node.lineHeight.unit === 'PIXELS'
+                 ? `line-height:${node.lineHeight.value}px;`
+                 : `line-height:${node.lineHeight.value / 100};`;
+          }
+
+          const textStyle = `width:100%;height:100%;display:flex;align-items:${va};`
+            + `font-size:${fs}px;font-weight:${fw};font-family:${ff};`
+            + `text-align:${ta};text-transform:${tc};text-decoration:${td};`
+            + `white-space:pre-wrap;overflow:hidden;${ls}${lh}`;
+
+          inner = `<div style="${textStyle}"><span>${escapeHtml(node.characters || '')}</span></div>`;
+        } else if (node.children && node.children.length > 0) {
+          inner += node.children.map(child => renderNode(child, node.x, node.y)).join('');
+        }
+
+        return `<div style="${styleStr}">${inner}</div>`;
+      }
+
+      const framesHTML = exportData.frames.map(frame => {
+        const nodesHTML = frame.nodes.map(node => renderNode(node)).join('');
+        return `<section style="position:relative;width:${frame.width}px;height:${frame.height}px;`
+          + `background:${frame.backgroundColor};overflow:hidden;display:inline-block;margin:0 0 32px 0;">`
+          + nodesHTML
+          + `</section>`;
+      }).join('\n');
+
+      const title = escapeHtml(exportData.meta.figmaFileName || 'Figma Export');
+      const imageKeys = Object.keys(images);
+      const debugScript = `<script>\n`
+        + `console.log('[BannerForge] images in export (${imageKeys.length}):', ${JSON.stringify(imageKeys)});\n`
+        + `document.querySelectorAll('img[src^="data:image"]').forEach((el,i)=>{\n`
+        + `  const ok=el.complete&&el.naturalWidth>0;\n`
+        + `  console.log('[BannerForge] img['+i+'] '+el.style.cssText.slice(0,60)+' loaded='+ok+' naturalSize='+el.naturalWidth+'x'+el.naturalHeight);\n`
+        + `});\n`
+        + `<\/script>`;
+      return `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n`
+        + `<title>${title}</title>\n`
+        + `<style>*{margin:0;padding:0;box-sizing:border-box;}`
+        + `body{background:#f0f0f0;padding:32px;display:flex;flex-direction:column;align-items:flex-start;}</style>\n`
+        + `</head>\n<body>\n${framesHTML}\n${debugScript}\n</body>\n</html>`;
+    }
+
+    function downloadHTML(data) {
+      const html = generateHTML(data);
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+      const frameNames = Array.from(selectedFrameIds)
+        .map(id => frames.find(f => f.id === id)?.name)
+        .filter(Boolean)
+        .join('_')
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 50);
+
+      a.href = url;
+      a.download = `bannerforge_${frameNames}_${timestamp}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     }
 
     // Button handlers

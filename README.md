@@ -65,6 +65,8 @@ This will automatically recompile `code.ts` → `code.js` when you make changes.
    - Images embedded as base64
    - Typography and styles
 
+Html file is also supported
+
 5. **Import in BannerForge:**
    - Go to BannerForge web app
    - Click "Import from Figma Plugin"
@@ -189,6 +191,13 @@ figma-plugin/
 - Use `console.log()` in `code.ts` - logs appear in Figma Desktop console (Help → Toggle Developer Tools)
 - Use `console.log()` in `ui.html` - logs appear in plugin UI console (right-click plugin → Inspect)
 
+## Publishing (Future)
+
+When ready to publish to Figma Community:
+
+1. Update version in `manifest.json` and `package.json`
+2. Test thoroughly with various frame types
+3. Follow Figma's plugin publishing guidelines: https://www.figma.com/plugin-docs/publishing/
 
 ## Next steps and possible additions 
 
@@ -261,3 +270,5 @@ figma-plugin/
     - Suggest optimal export format (PNG vs JPG vs WebP)
     - Could reduce final banner file sizes
 
+13. **Push to Bannerforge from Figma**
+    - Use Appwrite realtime API to push to bannerforge, directly from Figma
