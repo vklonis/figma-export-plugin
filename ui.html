@@ -536,22 +536,19 @@
 
       function isMixed(v) { return typeof v === 'symbol'; }
 
-      function renderNode(node, offsetX, offsetY) {
-        offsetX = offsetX || 0;
-        offsetY = offsetY || 0;
-
+      function renderNode(node) {
         const isContainer = node.type === 'FRAME' || node.type === 'GROUP'
                          || node.type === 'INSTANCE' || node.type === 'COMPONENT';
         const isText = node.type === 'TEXT';
         const isEllipse = node.type === 'ELLIPSE';
 
-        // node.x/y are always relative to the root frame (not the parent div).
-        // Subtract the accumulated parent offset so CSS absolute positioning
-        // (which is relative to the nearest positioned ancestor) lands correctly.
+        // node.x/y are parent-relative bounding-box coordinates (Figma's node.x/y),
+        // which map directly to CSS left/top since every div has position:absolute
+        // and is therefore the positioned ancestor for its children.
         const parts = [
           'position:absolute',
-          `left:${node.x - offsetX}px`,
-          `top:${node.y - offsetY}px`,
+          `left:${node.x}px`,
+          `top:${node.y}px`,
           `width:${node.width}px`,
           `height:${node.height}px`,
         ];
@@ -566,10 +563,10 @@
           parts.push(`transform:rotate(${-node.rotation}deg)`);
           parts.push('transform-origin:50% 50%');
         }
-        // Only FRAME/INSTANCE/COMPONENT nodes clip content in Figma.
-        // GROUP nodes never clip their children — applying overflow:hidden to them
-        // would hide arc/vector children that legitimately extend past the group bounds.
-        if (isContainer && node.type !== 'GROUP') {
+        // Apply overflow:hidden only when the node explicitly clips its content.
+        // GROUP nodes never clip (clipsContent is always false for them).
+        // FRAME/INSTANCE/COMPONENT clip only when clipsContent=true (Figma default).
+        if (isContainer && node.clipsContent) {
           parts.push('overflow:hidden');
         }
 
@@ -685,7 +682,7 @@
 
           inner = `<div style="${textStyle}"><span>${escapeHtml(node.characters || '')}</span></div>`;
         } else if (node.children && node.children.length > 0) {
-          inner += node.children.map(child => renderNode(child, node.x, node.y)).join('');
+          inner += node.children.map(child => renderNode(child)).join('');
         }
 
         return `<div style="${styleStr}">${inner}</div>`;

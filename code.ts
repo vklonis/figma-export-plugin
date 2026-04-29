@@ -32,7 +32,8 @@ interface ExportNode {
   lineHeight?: LineHeight | null;
   textCase?: string;
   textDecoration?: string;
-  // Additional
+  // Container
+  clipsContent?: boolean;
   children?: ExportNode[];
 }
 
@@ -169,22 +170,14 @@ async function processNodeRecursive(
     return;
   }
 
-  // Calculate position relative to the root frame using absolute transforms.
-  // node.x/y are relative to the direct parent, so we must use absoluteTransform
-  // which gives the true page-space position, then subtract the frame origin.
-  const absTransform = (node as any).absoluteTransform as
-    | number[][]
-    | undefined;
-  const frameTransform = rootFrame.absoluteTransform as number[][];
-  let relativeX: number;
-  let relativeY: number;
-  if (absTransform) {
-    relativeX = absTransform[0][2] - frameTransform[0][2];
-    relativeY = absTransform[1][2] - frameTransform[1][2];
-  } else {
-    relativeX = node.x - rootFrame.x;
-    relativeY = node.y - rootFrame.y;
-  }
+  // The root frame is always at (0, 0) relative to itself.
+  // Every other node: node.x/node.y are parent-relative bounding-box coordinates.
+  // They correctly account for rotation (unlike absoluteTransform[tx,ty] which is the
+  // pre-rotation pivot and gives wrong positions for rotated arcs/ellipses).
+  // CSS position:absolute left/top are also parent-relative, so no offset math needed.
+  const isRootFrame = node === (rootFrame as SceneNode);
+  const relativeX = isRootFrame ? 0 : ("x" in node ? (node as any).x as number : 0);
+  const relativeY = isRootFrame ? 0 : ("y" in node ? (node as any).y as number : 0);
 
   // Extract rotation
   const rotation = "rotation" in node ? node.rotation || 0 : 0;
@@ -236,6 +229,13 @@ async function processNodeRecursive(
       // Export fills for frames (background color, image fills, etc.)
       if ("fills" in node && node.fills !== figma.mixed) {
         exportNode.fills = await processPaints(node.fills as Paint[], images);
+      }
+      // Export clip setting — GROUPs never clip; FRAMEs/INSTANCEs/COMPONENTs may or may not
+      if ("clipsContent" in node) {
+        exportNode.clipsContent = (node as FrameNode).clipsContent;
+      } else {
+        // GROUP nodes have no clipsContent property — they never clip
+        exportNode.clipsContent = false;
       }
       // Process children recursively
       if ("children" in node) {
